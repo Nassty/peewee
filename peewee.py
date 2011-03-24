@@ -124,10 +124,15 @@ class MysqlAdapter(BaseAdapter):
         return MySQLdb.connect(db=database, **kwargs)
     
     def last_insert_id(self, cursor, model):
-        cursor.execute("SELECT CURRVAL('\"%s_%s_seq\"')" % (
-            model._meta.db_table, model._meta.pk_name))
+        cursor.execute("select last_insert_id() as id")
         return cursor.fetchone()[0]
     
+    def get_field_overrides(self):
+        return {
+            'primary_key': 'INTEGER AUTO_INCREMENT',
+            'datetime': 'TIMESTAMP WITH TIME ZONE'
+        }
+
     def lookup_cast(self, lookup, value):
         if lookup in ('contains', 'icontains'):
             return '%%%s%%' % value
@@ -187,6 +192,7 @@ class Database(object):
     
     def execute(self, sql, params=None, commit=False):
         cursor = self.conn.cursor()
+        print sql
         res = cursor.execute(sql, params or ())
         if commit:
             self.conn.commit()
@@ -898,6 +904,7 @@ class Field(object):
         self.name = name
         self.model = klass
         setattr(klass, name, None)
+        self.use_quotes = not isinstance(self.model._meta.database.adapter, MysqlAdapter) 
     
     def render_field_template(self):
         col_type = self.model._meta.database.column_for_field(self.db_field)
@@ -906,7 +913,11 @@ class Field(object):
     
     def to_sql(self):
         rendered = self.render_field_template()
-        return '%s %s' % (self.name, rendered)
+        if self.use_quotes:
+            template = '"%s" %s'
+        else:
+            template = "%s %s"
+        return template % (self.name, rendered)
     
     def null_wrapper(self, value, default=None):
         if (self.null and value is None) or default is None:
