@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+import MySQLdb
 
 try:
     import sqlite3
@@ -103,6 +104,36 @@ class SqliteAdapter(BaseAdapter):
             return '%s%%' % value
         return value
 
+class MysqlAdapter(BaseAdapter):
+    operations = {
+        'lt': '< %s',
+        'lte': '<= %s',
+        'gt': '> %s',
+        'gte': '>= %s',
+        'eq': '= %s',
+        'ne': '!= %s', # watch yourself with this one
+        'in': 'IN (%s)', # special-case to list q-marks
+        'is': 'IS %s',
+        'icontains': "COLLATE utf8_general_ci LIKE '%s'", # surround param with %'s
+        'contains': "COLLATE utf8_general_cs LIKE '%s'", # surround param with *'s
+        'istartswith': 'COLLATE utf8_general_ci LIKE %s',
+        'startswith': 'COLLATE utf8_general_cs LIKE %s',
+    }
+        
+    def connect(self, database, **kwargs):
+        return MySQLdb.connect(db=database, **kwargs)
+    
+    def last_insert_id(self, cursor, model):
+        cursor.execute("SELECT CURRVAL('\"%s_%s_seq\"')" % (
+            model._meta.db_table, model._meta.pk_name))
+        return cursor.fetchone()[0]
+    
+    def lookup_cast(self, lookup, value):
+        if lookup in ('contains', 'icontains'):
+            return '%%%s%%' % value
+        elif lookup in ('startswith', 'istartswith'):
+            return '%s%%' % value
+        return value
 
 class PostgresqlAdapter(BaseAdapter):
     operations = {
@@ -875,7 +906,7 @@ class Field(object):
     
     def to_sql(self):
         rendered = self.render_field_template()
-        return '"%s" %s' % (self.name, rendered)
+        return '%s %s' % (self.name, rendered)
     
     def null_wrapper(self, value, default=None):
         if (self.null and value is None) or default is None:
@@ -1043,13 +1074,14 @@ class ForeignKeyField(IntegerField):
 
 class BaseModelOptions(object):
     def __init__(self, model_class, options=None):
+        # configurable options
+        options = options or {'database': database}
+        for k, v in options.items():
+            setattr(self, k, v)
+        
         self.rel_fields = {}
         self.fields = {}
         self.model_class = model_class
-        
-        # configurable options
-        options = options or {}
-        self.database = options.get('database', database)
     
     def get_field_by_name(self, name):
         if name in self.fields:
@@ -1078,6 +1110,8 @@ class BaseModelOptions(object):
 
 
 class BaseModel(type):
+    inheritable_options = ['database']
+    
     def __new__(cls, name, bases, attrs):
         cls = super(BaseModel, cls).__new__(cls, name, bases, attrs)
 
@@ -1092,7 +1126,7 @@ class BaseModel(type):
                 continue
             
             for (k, v) in base_meta.__dict__.items():
-                if not k.startswith('_') and k not in attr_dict:
+                if k in cls.inheritable_options and k not in attr_dict:
                     attr_dict[k] = v
         
         _meta = BaseModelOptions(cls, attr_dict)
