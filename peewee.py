@@ -119,6 +119,7 @@ class MysqlAdapter(BaseAdapter):
         'istartswith': 'COLLATE utf8_general_ci LIKE %s',
         'startswith': 'COLLATE utf8_general_cs LIKE %s',
     }
+    remove_quotes = True
         
     def connect(self, database, **kwargs):
         return MySQLdb.connect(db=database, **kwargs)
@@ -904,7 +905,7 @@ class Field(object):
         self.name = name
         self.model = klass
         setattr(klass, name, None)
-        self.use_quotes = not isinstance(self.model._meta.database.adapter, MysqlAdapter) 
+       
     
     def render_field_template(self):
         col_type = self.model._meta.database.column_for_field(self.db_field)
@@ -913,10 +914,10 @@ class Field(object):
     
     def to_sql(self):
         rendered = self.render_field_template()
-        if self.use_quotes:
-            template = '"%s" %s'
-        else:
+        if getattr(self.model._meta.database.adapter, "remove_quotes", False): 
             template = "%s %s"
+        else:
+            template = '"%s" %s'
         return template % (self.name, rendered)
     
     def null_wrapper(self, value, default=None):
@@ -1066,7 +1067,10 @@ class ForeignKeyField(IntegerField):
         self.descriptor = name
         self.name = name + '_id'
         self.model = klass
-        
+
+        if getattr(self.model._meta.database.adapter, "remove_quotes", False): 
+            self.field_template = '%(column_type)s%(nullable)s REFERENCES %(to_table)s (%(to_pk)s)'
+
         if self.related_name is None:
             self.related_name = klass._meta.db_table + '_set'
         
